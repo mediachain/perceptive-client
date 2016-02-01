@@ -1,0 +1,4 @@
+more-itertools==2.2
+phash==0.2.0
+Wand==0.4.2
+wheel==0.24.0
