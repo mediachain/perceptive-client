@@ -5,7 +5,7 @@ Lookup image metadata locally using pHash index
 ## Summary
 
 This is a [mediachain](https://medium.com/mine-labs/mediachain-483f49cbe37a)
-demo that - given an image - will look up its metadata as stored on IPFS. For
+demo that -- given an image -- will look up its metadata as stored on IPFS. For
 the purposes of this demo, image reverse lookup is facilitated by an index
 calculated with the [pHash](http://phash.org/) perceptual hashing algorithm.
 
