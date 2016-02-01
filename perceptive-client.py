@@ -49,7 +49,7 @@ def load_index_file(filename):
   with open(filename) as f:
     return json.load(f, encoding='utf-8')
 
-def load_index_ipfs(ipfs_path=IPFS_INDEX_PATH, gateway=DEFAULT_IPFS_HTTP_GATEWAY, server=None):
+def ipfs_fetch(ipfs_path, gateway=DEFAULT_IPFS_HTTP_GATEWAY, server=None):
   if server is not None:
     ipfs = ipfsApi.Client(server)
     return ipfs.cat(ipfs_path)
@@ -60,13 +60,14 @@ def load_index_ipfs(ipfs_path=IPFS_INDEX_PATH, gateway=DEFAULT_IPFS_HTTP_GATEWAY
   return r.json()
 
 def search_index(index, img_hash, max_distance):
-  def in_threshold(hash_str):
-    h = int(hash_str, 16)
-    dist = phash.hamming_distance(img_hash,h)
-    return dist <= max_distance
 
-  hashes = filter(in_threshold, index.keys())
-  return [index[k] for k in hashes]
+  hashes_with_dist = map(lambda h: (phash.hamming_distance(img_hash, int(h, 16)), h),
+                         index.keys())
+  in_threshold =  filter(lambda t: t[0] <= max_distance, hashes_with_dist)
+  ordered = sorted(in_threshold, key=lambda t: t[0])
+
+  return [index[key] for [_, key] in ordered]
+
 
 if __name__ == '__main__':
 
@@ -83,12 +84,19 @@ if __name__ == '__main__':
 
 
   h = hash_image(args.image)
+  print('Searching with input image {}'.format(args.image))
+  print('perceptual hash: {:0x}'.format(h))
 
   if args.local_index is not None:
     idx = load_index_file(args.local_index)
   else:
-    idx = load_index_ipfs(gateway=args.ipfs_gateway, server=args.ipfs_server)
+    idx = ipfs_fetch(IPFS_INDEX_PATH, gateway=args.ipfs_gateway, server=args.ipfs_server)
 
   res = search_index(idx, h, args.distance)
-  print('image hash: {:0x}'.format(h))
-  print('meta hashes: {0}'.format(res))
+  if len(res) == 0:
+    print('No metadata known for {}'.format(args.image))
+  else:
+    meta_hash = res[0]
+    print('Fetching metadata from /ipfs/{}'.format(meta_hash))
+    meta = ipfs_fetch(meta_hash, gateway=args.ipfs_gateway, server=args.ipfs_server)
+    print(json.dumps(meta, indent=2))
