@@ -39,4 +39,6 @@ usage: perceptive-client [-h] [-d DISTANCE] [-g IPFS_GATEWAY | -s IPFS_SERVER]
 
 Some usage notes:
 
-- When using the `-s` option, specify only the IPv4 address of the server
+When using the `-s` option, specify only the IPv4 address of the server.
+Furthermore, when using the `-s` option (recommended), you should run a local
+IPFS daemon with the command `ipfs daemon`.
