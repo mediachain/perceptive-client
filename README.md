@@ -13,13 +13,17 @@ calculated with the [pHash](http://phash.org/) perceptual hashing algorithm.
 
 ### Mac OS X
 
-brew install imagemagick phash
+`brew install imagemagick phash`
+
+Install IPFS from source: https://github.com/ipfs/go-ipfs#build-from-source
 
 ### Ubuntu
 
 `sudo apt-get install libmagickwand-dev imagemagick`
 
 Compile & install pHash from http://phash.org/download/
+
+Install IPFS from source: https://github.com/ipfs/go-ipfs#build-from-source
 
 **Mac OS X**
 
