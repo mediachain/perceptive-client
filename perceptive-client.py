@@ -10,7 +10,7 @@ from urlparse import urlparse
 from wand.image import Image
 from tempfile import mkstemp
 
-DEFAULT_IPFS_SERVER = '127.0.0.1'
+DEFAULT_IPFS_SERVER = '127.0.0.1:5001'
 DEFAULT_IPFS_HTTP_GATEWAY = 'http://gateway.ipfs.io'
 IPFS_INDEX_PATH = '/ipns/QmRW2PTGpWk2X5sDbAvyDLV8668skcF8ADr1FcaP8VtC1q'
 
@@ -34,18 +34,36 @@ class IPFSFetcher:
         port = int(components[1])
         self.api = ipfsApi.Client(host=host, port=port)
 
-    elif gateway is not None:
+      # Try to get the id of the IPFS daemon to ensure it's reachable
+      try:
+        daemon_id = self.api.id()
+        print('Using IPFS daemon at {}, id: {}'.format(daemon, daemon_id['ID']))
+      except requests.exceptions.RequestException as e:
+        print('Unable to connect to IPFS daemon, using HTTP gateway.')
+        self.api = None
+
+    if gateway is not None:
       self.gateway = gateway.rstrip('/')
-    else:
+
+
+    if self.api is None and self.gateway is None:
       raise AttributeError('Must provide either an ipfs daemon address or an http gateway url')
 
   def fetch(self, path):
     if self.api is not None:
-      return self.api.cat(path)
+      try:
+        return self.api.cat(path)
+      except requests.exceptions.RequestException:
+        # fall back to HTTP gateway
+        return self.fetch_via_gateway(path)
+
     else:
       return self.fetch_via_gateway(path)
 
   def fetch_via_gateway(self, path):
+    if self.gateway is None:
+      raise AssertionError('No IPFS gateway configured')
+
     if not path.startswith('/'):
       path = '/ipfs/' + path
     uri = self.gateway + path
@@ -147,14 +165,12 @@ if __name__ == '__main__':
   parser = argparse.ArgumentParser('perceptive-client')
   parser.add_argument('image', help='The path to a local image file, or an http url for a remote image')
   parser.add_argument('-d', '--distance', type=int, help='maximum distance', default=8)
-
-  index_source = parser.add_mutually_exclusive_group()
-  index_source.add_argument('-g', '--ipfs_gateway', help='Use the IPFS gateway at this URL',
+  parser.add_argument('-g', '--ipfs_gateway', help='Use the IPFS gateway at this URL',
                             default=DEFAULT_IPFS_HTTP_GATEWAY)
-  index_source.add_argument('-s', '--ipfs_server',
-                            help="""Use IPFS server at this address.
+  parser.add_argument('-s', '--ipfs_server',
+                      default=DEFAULT_IPFS_SERVER,
+                      help="""Use IPFS server at this address.
                             Accepts ip or hostname with optional port, e.g: 127.0.0.1:5001""")
-  parser.add_argument_group(index_source)
   parser.add_argument('-l', '--local_index', help='Load index from local JSON filepath')
   args = parser.parse_args()
 
