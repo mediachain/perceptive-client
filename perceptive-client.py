@@ -19,12 +19,15 @@ class IPFSFetcher:
   Fetches JSON resources from IPFS.
   Uses an IPFS API daemon or an HTTP gateway, depending on the args to init.
   """
-  def __init__(self, daemon=None, gateway=None):
+  def __init__(self, daemon=None, gateway=None, force_gateway=False):
     """
     Create an IPFSFetcher object.
     :param daemon: ip/hostname of IPFS API daemon.  Can optionally specify port, e.g: 'localhost:5001'
     :param gateway: the URL for an HTTP gateway for IPFS.  Will be used if `daemon` is not specified.
     """
+
+    self.force_gateway = force_gateway
+
     if daemon is not None:
       components = daemon.split(':')
       host = components[0]
@@ -34,23 +37,26 @@ class IPFSFetcher:
         port = int(components[1])
         self.api = ipfsApi.Client(host=host, port=port)
 
+    if gateway is not None:
+      self.gateway = gateway.rstrip('/')
+
+    if self.api is None and self.gateway is None:
+      raise AttributeError('Must provide either an ipfs daemon address or an http gateway url')
+
+
+    if force_gateway or self.api is None:
+      print('Using HTTP/IPFS gateway at {}'.format(self.gateway))
+    else:
       # Try to get the id of the IPFS daemon to ensure it's reachable
       try:
         daemon_id = self.api.id()
         print('Using IPFS daemon at {}, id: {}'.format(daemon, daemon_id['ID']))
       except requests.exceptions.RequestException as e:
-        print('Unable to connect to IPFS daemon, using HTTP gateway.')
+        print('Unable to connect to IPFS daemon, using HTTP gateway at {}'.format(self.gateway))
         self.api = None
 
-    if gateway is not None:
-      self.gateway = gateway.rstrip('/')
-
-
-    if self.api is None and self.gateway is None:
-      raise AttributeError('Must provide either an ipfs daemon address or an http gateway url')
-
   def fetch(self, path):
-    if self.api is not None:
+    if self.api is not None and not self.force_gateway:
       try:
         return self.api.cat(path)
       except requests.exceptions.RequestException:
@@ -67,8 +73,11 @@ class IPFSFetcher:
     if not path.startswith('/'):
       path = '/ipfs/' + path
     uri = self.gateway + path
-    r = requests.get(uri, timeout=15)
-    return r.json()
+    try:
+      r = requests.get(uri, timeout=15)
+      return r.json()
+    except requests.exceptions.RequestException as e:
+      print('Error fetching {} via IPFS gateway: {}'.format(path, e.message))
 
 def dct_hash(filename):
   try:
@@ -90,15 +99,19 @@ def download_to_temp_file(uri):
     for chunk in r.iter_content(chunk_size=1024):
       if chunk:
         f.write(chunk)
+    f.close()
     return filename
   except requests.exceptions.RequestException as e:
     print('Error downloading image: {}'.format(e))
+    f.close()
+    os.remove(filename)
     return None
   except IOError as e:
+    f.close()
+    os.remove(filename)
     print('Error saving image: {}'.format(e))
     return None
-  finally:
-    f.close()
+
 
 def hash_image(path_or_url):
   """
@@ -165,12 +178,15 @@ if __name__ == '__main__':
   parser = argparse.ArgumentParser('perceptive-client')
   parser.add_argument('image', help='The path to a local image file, or an http url for a remote image')
   parser.add_argument('-d', '--distance', type=int, help='maximum distance', default=8)
-  parser.add_argument('-g', '--ipfs_gateway', help='Use the IPFS gateway at this URL',
-                            default=DEFAULT_IPFS_HTTP_GATEWAY)
-  parser.add_argument('-s', '--ipfs_server',
-                      default=DEFAULT_IPFS_SERVER,
+  ipfs_interface = parser.add_mutually_exclusive_group()
+  ipfs_interface.add_argument('-g', '--ipfs_gateway',
+                              nargs='?',
+                              const=DEFAULT_IPFS_HTTP_GATEWAY,
+                              help='Use the IPFS gateway at this URL')
+  ipfs_interface.add_argument('-s', '--ipfs_server',
                       help="""Use IPFS server at this address.
                             Accepts ip or hostname with optional port, e.g: 127.0.0.1:5001""")
+  parser.add_argument_group(ipfs_interface)
   parser.add_argument('-l', '--local_index', help='Load index from local JSON filepath')
   args = parser.parse_args()
 
@@ -179,7 +195,10 @@ if __name__ == '__main__':
   print('Searching with input image {}'.format(args.image))
   print('perceptual hash: {:0x}'.format(h))
 
-  fetcher = IPFSFetcher(gateway=args.ipfs_gateway, daemon=args.ipfs_server)
+  gateway = args.ipfs_gateway or DEFAULT_IPFS_HTTP_GATEWAY
+  daemon = args.ipfs_server or DEFAULT_IPFS_SERVER
+  force_gateway = (args.ipfs_gateway is not None)
+  fetcher = IPFSFetcher(gateway=gateway, daemon=daemon, force_gateway=force_gateway)
 
   if args.local_index is not None:
     idx = load_index_file(args.local_index)
