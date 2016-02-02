@@ -10,24 +10,119 @@ from urlparse import urlparse
 from wand.image import Image
 from tempfile import mkstemp
 
-DEFAULT_IPFS_SERVER = '127.0.0.1'
+DEFAULT_IPFS_SERVER = '127.0.0.1:5001'
 DEFAULT_IPFS_HTTP_GATEWAY = 'http://gateway.ipfs.io'
 IPFS_INDEX_PATH = '/ipns/QmRW2PTGpWk2X5sDbAvyDLV8668skcF8ADr1FcaP8VtC1q'
+
+class IPFSFetcher:
+  """
+  Fetches JSON resources from IPFS.
+  Uses an IPFS API daemon or an HTTP gateway, depending on the args to init.
+  """
+  def __init__(self, daemon=None, gateway=None):
+    """
+    Create an IPFSFetcher object.
+    :param daemon: ip/hostname of IPFS API daemon.  Can optionally specify port, e.g: 'localhost:5001'
+    :param gateway: the URL for an HTTP gateway for IPFS.  Will be used if `daemon` is not specified.
+    """
+    if daemon is not None:
+      components = daemon.split(':')
+      host = components[0]
+      if len(components) < 2:
+        self.api = ipfsApi.Client(host=host)
+      else:
+        port = int(components[1])
+        self.api = ipfsApi.Client(host=host, port=port)
+
+      # Try to get the id of the IPFS daemon to ensure it's reachable
+      try:
+        daemon_id = self.api.id()
+        print('Using IPFS daemon at {}, id: {}'.format(daemon, daemon_id['ID']))
+      except requests.exceptions.RequestException as e:
+        print('Unable to connect to IPFS daemon, using HTTP gateway.')
+        self.api = None
+
+    if gateway is not None:
+      self.gateway = gateway.rstrip('/')
+
+
+    if self.api is None and self.gateway is None:
+      raise AttributeError('Must provide either an ipfs daemon address or an http gateway url')
+
+  def fetch(self, path):
+    if self.api is not None:
+      try:
+        return self.api.cat(path)
+      except requests.exceptions.RequestException:
+        # fall back to HTTP gateway
+        return self.fetch_via_gateway(path)
+
+    else:
+      return self.fetch_via_gateway(path)
+
+  def fetch_via_gateway(self, path):
+    if self.gateway is None:
+      raise AssertionError('No IPFS gateway configured')
+
+    if not path.startswith('/'):
+      path = '/ipfs/' + path
+    uri = self.gateway + path
+    r = requests.get(uri, timeout=15)
+    return r.json()
 
 def dct_hash(filename):
   try:
     return phash.dct_imagehash(filename)
-  except:
+  except Exception as e:
+    print('Error hashing image: {}'.format(e))
     return None
 
-
+def download_to_temp_file(uri):
+  """
+  Download the contents of `uri` to a temporary file.
+  :returns The path to the temporary file.
+           The caller is responsible for deleting the file if needed.
+  """
+  file_handle, filename = mkstemp()
+  f = os.fdopen(file_handle, 'wb')
+  try:
+    r = requests.get(uri, stream=True)
+    for chunk in r.iter_content(chunk_size=1024):
+      if chunk:
+        f.write(chunk)
+    return filename
+  except requests.exceptions.RequestException as e:
+    print('Error downloading image: {}'.format(e))
+    return None
+  except IOError as e:
+    print('Error saving image: {}'.format(e))
+    return None
+  finally:
+    f.close()
 
 def hash_image(path_or_url):
+  """
+  Get pHash dct hash of image.
+  :param path_or_url: If given an http(s) url, downloads to a
+                      temporary file before hashing.
+  :return: perceptual hash of image file as `int`, or None on error
+  """
   parsed = urlparse(path_or_url)
   if parsed.scheme.startswith('http'):
-    raise NotImplementedError('TODO: download remote images!')
+    print('Fetching remote image from {}'.format(path_or_url))
+    temp_filename = download_to_temp_file(path_or_url)
+    h = hash_image_file(temp_filename)
+    os.remove(temp_filename)
+    return h
+  else:
+    return hash_image_file(parsed.path)
 
-  filepath = parsed.path
+def hash_image_file(filepath):
+  """
+  Get pHash dct hash of local image file.
+  :param filepath: path to image file
+  :return: perceptual hash of image file, or None on error
+  """
   if not os.path.exists(filepath):
     print("File {0} does not exist".format(filepath))
     return None
@@ -46,18 +141,14 @@ def hash_image(path_or_url):
 
 
 def load_index_file(filename):
+  """
+  Load search index from a local json file
+  :param filename: - path to index file
+  :return: - parsed index as python dict
+  """
   with open(filename) as f:
     return json.load(f, encoding='utf-8')
 
-def ipfs_fetch(ipfs_path, gateway=DEFAULT_IPFS_HTTP_GATEWAY, server=None):
-  if server is not None:
-    ipfs = ipfsApi.Client(server)
-    return ipfs.cat(ipfs_path)
-
-  # TODO validation of ipfs_path, better url concat
-  uri = gateway + ipfs_path
-  r = requests.get(uri, timeout=15)
-  return r.json()
 
 def search_index(index, img_hash, max_distance):
 
@@ -74,11 +165,12 @@ if __name__ == '__main__':
   parser = argparse.ArgumentParser('perceptive-client')
   parser.add_argument('image', help='The path to a local image file, or an http url for a remote image')
   parser.add_argument('-d', '--distance', type=int, help='maximum distance', default=8)
-
-  index_source = parser.add_mutually_exclusive_group()
-  index_source.add_argument('-g', '--ipfs_gateway', help='Use the IPFS gateway at this URL', default=DEFAULT_IPFS_HTTP_GATEWAY)
-  index_source.add_argument('-s', '--ipfs_server', help='Use IPFS server at this address')
-  parser.add_argument_group(index_source)
+  parser.add_argument('-g', '--ipfs_gateway', help='Use the IPFS gateway at this URL',
+                            default=DEFAULT_IPFS_HTTP_GATEWAY)
+  parser.add_argument('-s', '--ipfs_server',
+                      default=DEFAULT_IPFS_SERVER,
+                      help="""Use IPFS server at this address.
+                            Accepts ip or hostname with optional port, e.g: 127.0.0.1:5001""")
   parser.add_argument('-l', '--local_index', help='Load index from local JSON filepath')
   args = parser.parse_args()
 
@@ -87,10 +179,12 @@ if __name__ == '__main__':
   print('Searching with input image {}'.format(args.image))
   print('perceptual hash: {:0x}'.format(h))
 
+  fetcher = IPFSFetcher(gateway=args.ipfs_gateway, daemon=args.ipfs_server)
+
   if args.local_index is not None:
     idx = load_index_file(args.local_index)
   else:
-    idx = ipfs_fetch(IPFS_INDEX_PATH, gateway=args.ipfs_gateway, server=args.ipfs_server)
+    idx = fetcher.fetch(IPFS_INDEX_PATH)
 
   res = search_index(idx, h, args.distance)
   if len(res) == 0:
@@ -98,5 +192,5 @@ if __name__ == '__main__':
   else:
     meta_hash = res[0]
     print('Fetching metadata from /ipfs/{}'.format(meta_hash))
-    meta = ipfs_fetch(meta_hash, gateway=args.ipfs_gateway, server=args.ipfs_server)
+    meta = fetcher.fetch(meta_hash)
     print(json.dumps(meta, indent=2))
