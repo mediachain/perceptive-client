@@ -12,6 +12,9 @@ published to a known [IPNS](https://github.com/ipfs/examples/tree/master/example
 
 ## Requirements
 
+### All platforms
+`pip install -r requirements.txt`
+
 ### Mac OS X
 
 `brew install imagemagick phash`
