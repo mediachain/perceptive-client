@@ -26,10 +26,6 @@ Compile & install pHash from http://phash.org/download/
 
 Install IPFS from source: https://github.com/ipfs/go-ipfs#build-from-source
 
-**Mac OS X**
-
-`brew install imagemagick phash`
-
 ## Usage
 
 ```bash
