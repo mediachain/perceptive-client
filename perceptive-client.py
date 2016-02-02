@@ -201,9 +201,15 @@ if __name__ == '__main__':
   fetcher = IPFSFetcher(gateway=gateway, daemon=daemon, force_gateway=force_gateway)
 
   if args.local_index is not None:
+    print('Loading search index from local file {}'.format(args.local_index))
     idx = load_index_file(args.local_index)
   else:
+    print('Resolving and downloading search index (this may take a second)...')
     idx = fetcher.fetch(IPFS_INDEX_PATH)
+
+  if idx is None:
+    print('Unable to fetch search index :(')
+    exit(1)
 
   res = search_index(idx, h, args.distance)
   if len(res) == 0:
